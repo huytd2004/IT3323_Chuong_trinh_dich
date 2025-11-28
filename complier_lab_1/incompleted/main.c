@@ -27,6 +27,7 @@
 #include <stdlib.h> // Thư viện tiêu chuẩn: exit, malloc, ...
 
 #include "scanner.c" // Import trực tiếp file .c (không khuyến khích)
+// #include "error.h"   // Định nghĩa mã lỗi và hàm xử lý lỗi
 // Lý do: project này theo phong cách “small assignment”, không dùng header riêng
 // → scanner.c chứa hàm scan() dùng để phân tích mã nguồn
 
@@ -35,7 +36,7 @@
 // -------------------------------------------------------------
 int main(int argc, char *argv[])
 {
-
+  // error(10, 1, 1); // Ví dụ gọi hàm báo lỗi
   // Kiểm tra xem người dùng có nhập file đầu vào không
   if (argc <= 1)
   {
