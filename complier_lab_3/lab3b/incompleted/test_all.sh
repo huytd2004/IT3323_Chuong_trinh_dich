@@ -1,3 +1,5 @@
+# Cho phép thực thi : ./test_all.sh
+# Chạy test : ./test_all.sh
 #!/bin/bash
 # filepath: test_all.sh
 
