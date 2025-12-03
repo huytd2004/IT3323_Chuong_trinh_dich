@@ -1,4 +1,4 @@
-/* 
+/*
  * @copyright (c) 2008, Hedspi, Hanoi University of Technology
  * @author Huu-Duc Nguyen
  * @version 1.0
@@ -8,8 +8,17 @@
 #include <stdlib.h>
 #include "error.h"
 
-void error(ErrorCode err, int lineNo, int colNo) {
-  switch (err) {
+/*
+ * Hàm error:
+ *  - Nhận mã lỗi (ErrorCode), số dòng (lineNo) và cột (colNo)
+ *  - In thông báo lỗi tương ứng ra màn hình theo định dạng "dòng-cột: thông báo"
+ *  - Sau khi in, chương trình kết thúc (exit(0))
+ *  - Dùng trong quá trình phân tích từ vựng, cú pháp hoặc kiểm tra ngữ nghĩa
+ */
+void error(ErrorCode err, int lineNo, int colNo)
+{
+  switch (err)
+  {
   case ERR_ENDOFCOMMENT:
     printf("%d-%d:%s\n", lineNo, colNo, ERM_ENDOFCOMMENT);
     break;
@@ -65,14 +74,29 @@ void error(ErrorCode err, int lineNo, int colNo) {
     printf("%d-%d:%s\n", lineNo, colNo, ERM_INVALIDSUBDECL);
     break;
   }
-  exit(0);
+  exit(0); // Kết thúc chương trình ngay khi phát hiện lỗi
 }
 
-void missingToken(TokenType tokenType, int lineNo, int colNo) {
+/*
+ * Hàm missingToken:
+ *  - Thông báo khi một token cần thiết bị thiếu trong chương trình nguồn
+ *  - Nhận loại token (TokenType), số dòng và cột
+ *  - In thông báo "dòng-cột: Missing token" ra màn hình
+ *  - Kết thúc chương trình ngay lập tức
+ */
+void missingToken(TokenType tokenType, int lineNo, int colNo)
+{
   printf("%d-%d:Missing %s\n", lineNo, colNo, tokenToString(tokenType));
   exit(0);
 }
 
-void assert(char *msg) {
+/*
+ * Hàm assert:
+ *  - In ra thông báo nếu điều kiện kiểm tra thất bại
+ *  - Không kết thúc chương trình
+ *  - Có thể dùng để debug hoặc xác nhận một điều kiện nội bộ
+ */
+void assert(char *msg)
+{
   printf("%s\n", msg);
 }

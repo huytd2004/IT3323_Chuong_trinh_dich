@@ -8,6 +8,13 @@
 #include <ctype.h>
 #include "token.h"
 
+/**
+ * Bảng tra cứu các từ khóa (keywords) của ngôn ngữ KPL
+ * Mỗi phần tử gồm:
+ *   - string: Tên keyword viết HOA (PROGRAM, CONST, ...)
+ *   - tokenType: Loại token tương ứng (KW_PROGRAM, KW_CONST, ...)
+ * Tổng cộng có 20 keywords được định nghĩa trong KEYWORDS_COUNT
+ */
 struct
 {
   char string[MAX_IDENT_LEN + 1];
@@ -34,6 +41,17 @@ struct
     {"FOR", KW_FOR},
     {"TO", KW_TO}};
 
+/**
+ * So sánh 2 chuỗi không phân biệt HOA/thường
+ * @param kw - Keyword chuẩn (đã viết HOA) từ bảng keywords
+ * @param string - Chuỗi cần kiểm tra (có thể viết hoa/thường)
+ * @return 1 nếu 2 chuỗi giống nhau (không phân biệt hoa/thường), 0 nếu khác
+ *
+ * Ví dụ:
+ *   keywordEq("PROGRAM", "program") → 1
+ *   keywordEq("PROGRAM", "Program") → 1
+ *   keywordEq("PROGRAM", "BEGIN")   → 0
+ */
 int keywordEq(char *kw, char *string)
 {
   while ((*kw != '\0') && (*string != '\0'))
@@ -46,6 +64,21 @@ int keywordEq(char *kw, char *string)
   return ((*kw == '\0') && (*string == '\0'));
 }
 
+/**
+ * Kiểm tra xem một chuỗi có phải là keyword hay không
+ * @param string - Chuỗi cần kiểm tra (identifier đã đọc từ mã nguồn)
+ * @return TokenType tương ứng nếu là keyword (KW_PROGRAM, KW_BEGIN, ...)
+ *         TK_NONE nếu không phải keyword (là identifier thông thường)
+ *
+ * Cách hoạt động:
+ *   - Duyệt qua toàn bộ 20 keywords trong bảng keywords[]
+ *   - So sánh chuỗi với từng keyword bằng hàm keywordEq()
+ *   - Trả về tokenType nếu tìm thấy, TK_NONE nếu không tìm thấy
+ *
+ * Ví dụ:
+ *   checkKeyword("PROGRAM") → KW_PROGRAM
+ *   checkKeyword("myVar")   → TK_NONE (là identifier)
+ */
 TokenType checkKeyword(char *string)
 {
   int i;
@@ -55,6 +88,23 @@ TokenType checkKeyword(char *string)
   return TK_NONE;
 }
 
+/**
+ * Tạo một token mới và cấp phát bộ nhớ
+ * @param tokenType - Loại token (KW_PROGRAM, TK_IDENT, SB_SEMICOLON, ...)
+ * @param lineNo - Số dòng xuất hiện token trong mã nguồn (bắt đầu từ 1)
+ * @param colNo - Số cột xuất hiện token trong mã nguồn (bắt đầu từ 1)
+ * @return Con trỏ đến Token mới được tạo
+ *
+ * Lưu ý:
+ *   - Bộ nhớ được cấp phát động bằng malloc()
+ *   - Người gọi có trách nhiệm giải phóng bộ nhớ bằng free() sau khi dùng xong
+ *   - Trường string và value chưa được khởi tạo, cần gán sau nếu cần
+ *
+ * Ví dụ:
+ *   Token *t = makeToken(KW_PROGRAM, 1, 1);
+ *   // ... sử dụng token ...
+ *   free(t);
+ */
 Token *makeToken(TokenType tokenType, int lineNo, int colNo)
 {
   Token *token = (Token *)malloc(sizeof(Token));
@@ -64,6 +114,25 @@ Token *makeToken(TokenType tokenType, int lineNo, int colNo)
   return token;
 }
 
+/**
+ * Chuyển đổi TokenType thành chuỗi mô tả để hiển thị
+ * @param tokenType - Loại token cần chuyển đổi
+ * @return Chuỗi mô tả token dưới dạng human-readable
+ *
+ * Sử dụng chính:
+ *   - In thông báo lỗi khi thiếu token (Missing ...)
+ *   - Hiển thị token trong quá trình debug
+ *
+ * Format trả về:
+ *   - Keywords: "keyword PROGRAM", "keyword BEGIN", ...
+ *   - Identifiers/Numbers: "an identification", "a number", ...
+ *   - Symbols: "';'", "':='", "'('", ...
+ *
+ * Ví dụ:
+ *   tokenToString(KW_PROGRAM)    → "keyword PROGRAM"
+ *   tokenToString(SB_SEMICOLON)  → "';'"
+ *   tokenToString(TK_IDENT)      → "an identification"
+ */
 char *tokenToString(TokenType tokenType)
 {
   switch (tokenType)
