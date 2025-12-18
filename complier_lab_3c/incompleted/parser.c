@@ -9,6 +9,7 @@
 #include "reader.h"
 #include "scanner.h"
 #include "parser.h"
+#include "semantics.h"
 #include "error.h"
 #include "debug.h"
 
@@ -19,13 +20,6 @@ extern Type *intType;
 extern Type *charType;
 extern SymTab *symtab;
 
-/**
- * Hàm scan: Dịch chuyển con trỏ token tiến lên
- * - Lưu currentToken tạm để free sau
- * - currentToken nhận giá trị từ lookAhead
- * - lookAhead đọc token mới từ scanner
- * - Giải phóng bộ nhớ token cũ
- */
 void scan(void)
 {
   Token *tmp = currentToken;
@@ -34,12 +28,6 @@ void scan(void)
   free(tmp);
 }
 
-/**
- * Hàm eat: Kiểm tra và tiêu thụ token mong đợi
- * @param tokenType: Loại token mong đợi
- * - Nếu lookAhead đúng loại token cần thiết -> gọi scan() để tiến lên
- * - Nếu sai -> báo lỗi thiếu token
- */
 void eat(TokenType tokenType)
 {
   if (lookAhead->tokenType == tokenType)
@@ -50,33 +38,6 @@ void eat(TokenType tokenType)
     missingToken(tokenType, lookAhead->lineNo, lookAhead->colNo);
 }
 
-/**
- * Hàm compileProgram: Phân tích cú pháp chương trình
- * Grammar: Program -> KW_PROGRAM TK_IDENT SB_SEMICOLON Block SB_PERIOD
- *
- * Các bước:
- * 1. Đọc từ khóa PROGRAM
- * 2. Đọc tên chương trình (identifier)
- * 3. Tạo object program và thêm vào symbol table
- * 4. Vào scope của program (để khai báo biến, hàm, ...)
- * 5. Đọc dấu chấm phẩy
- * 6. Phân tích block chính (CONST, TYPE, VAR, Function/Procedure, BEGIN...END)
- * 7. Đọc dấu chấm kết thúc chương trình
- * 8. Thoát khỏi scope của program
- */
-// program = {
-//     name: "Example2",
-//     kind: OBJ_PROGRAM,
-//     progAttrs: {
-//         scope: {
-//             objList: NULL,        // Chưa có object nào
-//             owner: program,       // Tự tham chiếu
-//             outer: NULL           // Scope ngoài cùng
-//         }
-//     }
-// }
-
-// symtab->program = program  // Gán vào symbol table
 void compileProgram(void)
 {
   Object *program;
@@ -84,31 +45,17 @@ void compileProgram(void)
   eat(KW_PROGRAM);
   eat(TK_IDENT);
 
-  // Tạo object program với tên từ token vừa đọc
   program = createProgramObject(currentToken->string);
-
-  // Vào block của program
   enterBlock(program->progAttrs->scope);
 
   eat(SB_SEMICOLON);
+
   compileBlock();
   eat(SB_PERIOD);
 
-  // Thoát khỏi block program
   exitBlock();
 }
 
-/**
- * Hàm compileBlock: Phân tích phần khai báo CONST
- * Grammar: Block -> CONST ConstDecl+ | Block2
- *
- * Xử lý:
- * - Nếu có từ khóa CONST:
- *   + Đọc từng khai báo constant (tên = giá trị;)
- *   + Tạo constant object và thêm vào symbol table
- *   + Lặp lại cho đến khi hết identifier
- * - Tiếp tục xử lý Block2 (TYPE declarations)
- */
 void compileBlock(void)
 {
   Object *constObj;
@@ -121,15 +68,17 @@ void compileBlock(void)
     do
     {
       eat(TK_IDENT);
-      // Tạo object constant với tên từ token vừa đọc
+      // TODO: Check if a constant identifier is fresh in the block
+      checkFreshIdent(currentToken->string);
+
+      // Create a constant object
       constObj = createConstantObject(currentToken->string);
 
       eat(SB_EQ);
-      // Compile và gán giá trị cho constant
+      // Get the constant value
       constValue = compileConstant();
       constObj->constAttrs->value = constValue;
-
-      // Khai báo constant vào scope hiện tại
+      // Declare the constant object
       declareObject(constObj);
 
       eat(SB_SEMICOLON);
@@ -141,21 +90,10 @@ void compileBlock(void)
     compileBlock2();
 }
 
-/**
- * Hàm compileBlock2: Phân tích phần khai báo TYPE
- * Grammar: Block2 -> TYPE TypeDecl+ | Block3
- *
- * Xử lý:
- * - Nếu có từ khóa TYPE:
- *   + Đọc từng khai báo type (tên = kiểu;)
- *   + Tạo type object và thêm vào symbol table
- *   + Ví dụ: T = ARRAY [10] OF INTEGER;
- * - Tiếp tục xử lý Block3 (VAR declarations)
- */
 void compileBlock2(void)
 {
   Object *typeObj;
-  Type *type;
+  Type *actualType;
 
   if (lookAhead->tokenType == KW_TYPE)
   {
@@ -164,15 +102,17 @@ void compileBlock2(void)
     do
     {
       eat(TK_IDENT);
-      // Tạo object type với tên từ token vừa đọc
+      // TODO: Check if a type identifier is fresh in the block
+      checkFreshIdent(currentToken->string);
+
+      // create a type object
       typeObj = createTypeObject(currentToken->string);
 
       eat(SB_EQ);
-      // Compile và gán type
-      type = compileType();
-      typeObj->typeAttrs->actualType = type;
-
-      // Khai báo type vào scope hiện tại
+      // Get the actual type
+      actualType = compileType();
+      typeObj->typeAttrs->actualType = actualType;
+      // Declare the type object
       declareObject(typeObj);
 
       eat(SB_SEMICOLON);
@@ -184,21 +124,10 @@ void compileBlock2(void)
     compileBlock3();
 }
 
-/**
- * Hàm compileBlock3: Phân tích phần khai báo VAR (biến)
- * Grammar: Block3 -> VAR VarDecl+ | Block4
- *
- * Xử lý:
- * - Nếu có từ khóa VAR:
- *   + Đọc từng khai báo biến (tên : kiểu;)
- *   + Tạo variable object và thêm vào symbol table
- *   + Ví dụ: n : INTEGER;
- * - Tiếp tục xử lý Block4 (Function/Procedure declarations)
- */
 void compileBlock3(void)
 {
   Object *varObj;
-  Type *type;
+  Type *varType;
 
   if (lookAhead->tokenType == KW_VAR)
   {
@@ -207,15 +136,17 @@ void compileBlock3(void)
     do
     {
       eat(TK_IDENT);
-      // Tạo object variable với tên từ token vừa đọc
+      // TODO: Check if a variable identifier is fresh in the block
+      checkFreshIdent(currentToken->string);
+
+      // Create a variable object
       varObj = createVariableObject(currentToken->string);
 
       eat(SB_COLON);
-      // Compile và gán type cho variable
-      type = compileType();
-      varObj->varAttrs->type = type;
-
-      // Khai báo variable vào scope hiện tại
+      // Get the variable type
+      varType = compileType();
+      varObj->varAttrs->type = varType;
+      // Declare the variable object
       declareObject(varObj);
 
       eat(SB_SEMICOLON);
@@ -227,24 +158,12 @@ void compileBlock3(void)
     compileBlock4();
 }
 
-/**
- * Hàm compileBlock4: Phân tích Function/Procedure và phần thân BEGIN...END
- * - Gọi compileSubDecls() để xử lý khai báo FUNCTION và PROCEDURE
- * - Gọi compileBlock5() để xử lý phần thân BEGIN...END
- */
 void compileBlock4(void)
 {
   compileSubDecls();
   compileBlock5();
 }
 
-/**
- * Hàm compileBlock5: Phân tích phần thân chương trình
- * Grammar: Block5 -> BEGIN Statements END
- * - Đọc từ khóa BEGIN
- * - Phân tích các câu lệnh (assignments, if, while, for, call, ...)
- * - Đọc từ khóa END
- */
 void compileBlock5(void)
 {
   eat(KW_BEGIN);
@@ -252,15 +171,6 @@ void compileBlock5(void)
   eat(KW_END);
 }
 
-/**
- * Hàm compileSubDecls: Phân tích khai báo Function và Procedure
- * Grammar: SubDecls -> (FuncDecl | ProcDecl)*
- *
- * Lặp lại:
- * - Nếu gặp FUNCTION -> gọi compileFuncDecl()
- * - Nếu gặp PROCEDURE -> gọi compileProcDecl()
- * - Dừng khi không còn FUNCTION/PROCEDURE nào
- */
 void compileSubDecls(void)
 {
   while ((lookAhead->tokenType == KW_FUNCTION) || (lookAhead->tokenType == KW_PROCEDURE))
@@ -272,22 +182,6 @@ void compileSubDecls(void)
   }
 }
 
-/**
- * Hàm compileFuncDecl: Phân tích khai báo FUNCTION
- * Grammar: FuncDecl -> FUNCTION Ident Params : Type ; Block ;
- *
- * Các bước:
- * 1. Đọc từ khóa FUNCTION
- * 2. Đọc tên function
- * 3. Tạo function object và khai báo vào scope hiện tại
- * 4. Vào scope của function (tạo scope mới cho tham số và biến cục bộ)
- * 5. Phân tích danh sách tham số
- * 6. Đọc dấu hai chấm và kiểu trả về
- * 7. Phân tích block của function (CONST, VAR, BEGIN...END)
- * 8. Thoát khỏi scope của function
- *
- * Ví dụ: FUNCTION F(n : INTEGER) : INTEGER;
- */
 void compileFuncDecl(void)
 {
   Object *funcObj;
@@ -295,97 +189,73 @@ void compileFuncDecl(void)
 
   eat(KW_FUNCTION);
   eat(TK_IDENT);
+  // TODO: Check if a function identifier is fresh in the block
+  checkFreshIdent(currentToken->string);
 
-  // Tạo function object
+  // create the function object
   funcObj = createFunctionObject(currentToken->string);
-
-  // Khai báo function vào scope hiện tại
+  // declare the function object
   declareObject(funcObj);
-
-  // Vào scope của function để compile params
+  // enter the function's block
   enterBlock(funcObj->funcAttrs->scope);
-
+  // parse the function's parameters
   compileParams();
   eat(SB_COLON);
-
-  // Compile và gán return type
+  // get the funtion's return type
   returnType = compileBasicType();
   funcObj->funcAttrs->returnType = returnType;
 
   eat(SB_SEMICOLON);
   compileBlock();
   eat(SB_SEMICOLON);
-
-  // Thoát khỏi scope của function
+  // exit the function block
   exitBlock();
 }
 
-/**
- * Hàm compileProcDecl: Phân tích khai báo PROCEDURE
- * Grammar: ProcDecl -> PROCEDURE Ident Params ; Block ;
- *
- * Tương tự Function nhưng không có kiểu trả về
- * Các bước:
- * 1. Đọc từ khóa PROCEDURE
- * 2. Đọc tên procedure
- * 3. Tạo procedure object và khai báo
- * 4. Vào scope của procedure
- * 5. Phân tích danh sách tham số
- * 6. Phân tích block của procedure
- * 7. Thoát khỏi scope
- *
- * Ví dụ: PROCEDURE WriteLn();
- */
 void compileProcDecl(void)
 {
   Object *procObj;
 
   eat(KW_PROCEDURE);
   eat(TK_IDENT);
-
-  // Tạo procedure object
+  // TODO: Check if a procedure identifier is fresh in the block
+  checkFreshIdent(currentToken->string);
+  // create a procedure object
   procObj = createProcedureObject(currentToken->string);
-
-  // Khai báo procedure vào scope hiện tại
+  // declare the procedure object
   declareObject(procObj);
-
-  // Vào scope của procedure để compile params
+  // enter the procedure's block
   enterBlock(procObj->procAttrs->scope);
-
+  // parse the procedure's parameters
   compileParams();
+
   eat(SB_SEMICOLON);
   compileBlock();
   eat(SB_SEMICOLON);
-
-  // Thoát khỏi scope của procedure
+  // exit the block
   exitBlock();
 }
 
 ConstantValue *compileUnsignedConstant(void)
 {
-  // TODO: create and return an unsigned constant value
-  ConstantValue *constValue = NULL;
+  ConstantValue *constValue;
   Object *obj;
 
   switch (lookAhead->tokenType)
   {
   case TK_NUMBER:
     eat(TK_NUMBER);
-    // Tạo constant value từ số nguyên
     constValue = makeIntConstant(currentToken->value);
     break;
   case TK_IDENT:
     eat(TK_IDENT);
-    // Tìm constant đã khai báo
-    obj = lookupObject(currentToken->string);
-    if (obj != NULL && obj->kind == OBJ_CONSTANT)
-      constValue = duplicateConstantValue(obj->constAttrs->value);
-    else
-      error(ERR_UNDECLARED_CONSTANT, currentToken->lineNo, currentToken->colNo);
+    // TODO: check if the constant identifier is declared and get its value
+    obj = checkDeclaredConstant(currentToken->string);
+    constValue = duplicateConstantValue(obj->constAttrs->value);
+
     break;
   case TK_CHAR:
     eat(TK_CHAR);
-    // Tạo constant value từ ký tự
     constValue = makeCharConstant(currentToken->string[0]);
     break;
   default:
@@ -397,8 +267,7 @@ ConstantValue *compileUnsignedConstant(void)
 
 ConstantValue *compileConstant(void)
 {
-  // TODO: create and return a constant
-  ConstantValue *constValue = NULL;
+  ConstantValue *constValue;
 
   switch (lookAhead->tokenType)
   {
@@ -409,9 +278,7 @@ ConstantValue *compileConstant(void)
   case SB_MINUS:
     eat(SB_MINUS);
     constValue = compileConstant2();
-    // Đổi dấu nếu là số nguyên
-    if (constValue != NULL && constValue->type == TP_INT)
-      constValue->intValue = -(constValue->intValue);
+    constValue->intValue = -constValue->intValue;
     break;
   case TK_CHAR:
     eat(TK_CHAR);
@@ -426,8 +293,7 @@ ConstantValue *compileConstant(void)
 
 ConstantValue *compileConstant2(void)
 {
-  // TODO: create and return a constant value
-  ConstantValue *constValue = NULL;
+  ConstantValue *constValue;
   Object *obj;
 
   switch (lookAhead->tokenType)
@@ -438,12 +304,11 @@ ConstantValue *compileConstant2(void)
     break;
   case TK_IDENT:
     eat(TK_IDENT);
-    // Tìm constant đã khai báo
-    obj = lookupObject(currentToken->string);
-    if (obj != NULL && obj->kind == OBJ_CONSTANT)
-      constValue = duplicateConstantValue(obj->constAttrs->value);
-    else
-      error(ERR_UNDECLARED_CONSTANT, currentToken->lineNo, currentToken->colNo);
+    // TODO: check if the integer constant identifier is declared and get its value
+    obj = checkDeclaredConstant(currentToken->string);
+    if (obj->constAttrs->value->type != TP_INT)
+      error(ERR_UNDECLARED_INT_CONSTANT, currentToken->lineNo, currentToken->colNo);
+    constValue = duplicateConstantValue(obj->constAttrs->value);
     break;
   default:
     error(ERR_INVALID_CONSTANT, lookAhead->lineNo, lookAhead->colNo);
@@ -454,8 +319,7 @@ ConstantValue *compileConstant2(void)
 
 Type *compileType(void)
 {
-  // TODO: create and return a type
-  Type *type = NULL;
+  Type *type;
   Type *elementType;
   int arraySize;
   Object *obj;
@@ -474,7 +338,9 @@ Type *compileType(void)
     eat(KW_ARRAY);
     eat(SB_LSEL);
     eat(TK_NUMBER);
+
     arraySize = currentToken->value;
+
     eat(SB_RSEL);
     eat(KW_OF);
     elementType = compileType();
@@ -482,12 +348,9 @@ Type *compileType(void)
     break;
   case TK_IDENT:
     eat(TK_IDENT);
-    // Tìm type đã khai báo
-    obj = lookupObject(currentToken->string);
-    if (obj != NULL && obj->kind == OBJ_TYPE)
-      type = duplicateType(obj->typeAttrs->actualType);
-    else
-      error(ERR_UNDECLARED_TYPE, currentToken->lineNo, currentToken->colNo);
+    // TODO: check if the type idntifier is declared and get its actual type
+    obj = checkDeclaredType(currentToken->string);
+    type = duplicateType(obj->typeAttrs->actualType);
     break;
   default:
     error(ERR_INVALID_TYPE, lookAhead->lineNo, lookAhead->colNo);
@@ -498,8 +361,7 @@ Type *compileType(void)
 
 Type *compileBasicType(void)
 {
-  // TODO: create and return a basic type
-  Type *type = NULL;
+  Type *type;
 
   switch (lookAhead->tokenType)
   {
@@ -518,19 +380,6 @@ Type *compileBasicType(void)
   return type;
 }
 
-/**
- * Hàm compileParams: Phân tích danh sách tham số
- * Grammar: Params -> ( Param (; Param)* ) | epsilon
- *
- * Xử lý:
- * - Nếu có dấu mở ngoặc (
- *   + Phân tích tham số đầu tiên
- *   + Lặp: nếu gặp dấu ; thì phân tích tham số tiếp theo
- *   + Đọc dấu đóng ngoặc )
- * - Nếu không có ngoặc -> không có tham số (epsilon)
- *
- * Ví dụ: (n : INTEGER; VAR x : CHAR)
- */
 void compileParams(void)
 {
   if (lookAhead->tokenType == SB_LPAR)
@@ -546,24 +395,6 @@ void compileParams(void)
   }
 }
 
-/**
- * Hàm compileParam: Phân tích một tham số
- * Grammar: Param -> Ident : Type | VAR Ident : Type
- *
- * Hai loại tham số:
- * 1. PARAM_VALUE (tham trị): n : INTEGER
- *    - Truyền giá trị, thay đổi trong hàm không ảnh hưởng ngoài
- *
- * 2. PARAM_REFERENCE (tham chiếu): VAR x : INTEGER
- *    - Truyền địa chỉ, thay đổi trong hàm ảnh hưởng biến gốc
- *
- * Các bước:
- * - Xác định loại tham số (có VAR hay không)
- * - Đọc tên tham số
- * - Tạo parameter object với owner là function/procedure hiện tại
- * - Đọc kiểu dữ liệu
- * - Khai báo vào scope của function/procedure
- */
 void compileParam(void)
 {
   Object *param;
@@ -573,32 +404,25 @@ void compileParam(void)
   switch (lookAhead->tokenType)
   {
   case TK_IDENT:
-    paramKind = PARAM_VALUE; // Tham trị
-    eat(TK_IDENT);
-    // Tạo parameter object
-    param = createParameterObject(currentToken->string, paramKind, symtab->currentScope->owner);
-    eat(SB_COLON);
-    type = compileBasicType();
-    param->paramAttrs->type = type;
-    // Khai báo parameter
-    declareObject(param);
+    paramKind = PARAM_VALUE;
     break;
   case KW_VAR:
-    paramKind = PARAM_REFERENCE; // Tham chiếu
     eat(KW_VAR);
-    eat(TK_IDENT);
-    // Tạo parameter object (tham chiếu)
-    param = createParameterObject(currentToken->string, paramKind, symtab->currentScope->owner);
-    eat(SB_COLON);
-    type = compileBasicType();
-    param->paramAttrs->type = type;
-    // Khai báo parameter
-    declareObject(param);
+    paramKind = PARAM_REFERENCE;
     break;
   default:
     error(ERR_INVALID_PARAMETER, lookAhead->lineNo, lookAhead->colNo);
     break;
   }
+
+  eat(TK_IDENT);
+  // TODO: check if the parameter identifier is fresh in the block
+  checkFreshIdent(currentToken->string);
+  param = createParameterObject(currentToken->string, paramKind, symtab->currentScope->owner);
+  eat(SB_COLON);
+  type = compileBasicType();
+  param->paramAttrs->type = type;
+  declareObject(param);
 }
 
 void compileStatements(void)
@@ -647,8 +471,13 @@ void compileStatement(void)
 
 void compileLValue(void)
 {
+  Object *var;
+
   eat(TK_IDENT);
-  compileIndexes();
+  // check if the identifier is a function identifier, or a variable identifier, or a parameter
+  var = checkDeclaredLValueIdent(currentToken->string);
+  if (var->kind == OBJ_VARIABLE)
+    compileIndexes();
 }
 
 void compileAssignSt(void)
@@ -662,6 +491,8 @@ void compileCallSt(void)
 {
   eat(KW_CALL);
   eat(TK_IDENT);
+  // TODO: check if the identifier is a declared procedure
+  checkDeclaredProcedure(currentToken->string);
   compileArguments();
 }
 
@@ -700,10 +531,16 @@ void compileForSt(void)
 {
   eat(KW_FOR);
   eat(TK_IDENT);
+
+  // TODO: check if the identifier is a variable
+  checkDeclaredVariable(currentToken->string);
+
   eat(SB_ASSIGN);
   compileExpression();
+
   eat(KW_TO);
   compileExpression();
+
   eat(KW_DO);
   compileStatement();
 }
@@ -758,6 +595,7 @@ void compileArguments(void)
 void compileCondition(void)
 {
   compileExpression();
+
   switch (lookAhead->tokenType)
   {
   case SB_EQ:
@@ -890,6 +728,8 @@ void compileTerm2(void)
 
 void compileFactor(void)
 {
+  Object *obj;
+
   switch (lookAhead->tokenType)
   {
   case TK_NUMBER:
@@ -900,15 +740,23 @@ void compileFactor(void)
     break;
   case TK_IDENT:
     eat(TK_IDENT);
-    switch (lookAhead->tokenType)
+    // check if the identifier is declared
+    obj = checkDeclaredIdent(currentToken->string);
+
+    switch (obj->kind)
     {
-    case SB_LPAR:
-      compileArguments();
+    case OBJ_CONSTANT:
       break;
-    case SB_LSEL:
+    case OBJ_VARIABLE:
       compileIndexes();
       break;
+    case OBJ_PARAMETER:
+      break;
+    case OBJ_FUNCTION:
+      compileArguments();
+      break;
     default:
+      error(ERR_INVALID_FACTOR, currentToken->lineNo, currentToken->colNo);
       break;
     }
     break;
@@ -927,19 +775,6 @@ void compileIndexes(void)
   }
 }
 
-/**
- * Hàm compile: Hàm chính để compile một file KPL
- * @param fileName: Đường dẫn đến file cần compile
- * @return: IO_SUCCESS nếu thành công, IO_ERROR nếu thất bại
- *
- * Luồng thực thi:
- * 1. Mở file input
- * 2. Khởi tạo token (currentToken, lookAhead)
- * 3. Khởi tạo symbol table (với các kiểu dữ liệu cơ bản)
- * 4. Phân tích cú pháp chương trình và xây dựng symbol table
- * 5. In ra cấu trúc symbol table (để debug/kiểm tra)
- * 6. Dọn dẹp bộ nhớ và đóng file
- */
 int compile(char *fileName)
 {
   if (openInputStream(fileName) == IO_ERROR)
@@ -952,7 +787,7 @@ int compile(char *fileName)
 
   compileProgram();
 
-  printObject(symtab->program, 0); // In kết quả symbol table
+  printObject(symtab->program, 0);
 
   cleanSymTab();
 
